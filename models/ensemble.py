@@ -68,7 +68,24 @@ def compute_risk_score(
     # we apply a multiplier so area has a much stronger impact on the final score.
     area_factor = float(np.clip(area * 3.5, 0.0, 1.0))
 
-    raw = conf * 0.40 + area_factor * 0.40 + growth * 0.10 + smoke * 0.10
+    from config.settings import get_settings
+    settings = get_settings()
+    w_conf = float(settings.risk_w_conf)
+    w_area = float(settings.risk_w_area)
+    w_growth = float(settings.risk_w_growth)
+    w_smoke = float(settings.risk_w_smoke)
+
+    # Normalize weights so they sum to 1.0
+    total = w_conf + w_area + w_growth + w_smoke
+    if total > 0.0:
+        w_conf /= total
+        w_area /= total
+        w_growth /= total
+        w_smoke /= total
+    else:
+        w_conf, w_area, w_growth, w_smoke = 0.40, 0.30, 0.20, 0.10
+
+    raw = conf * w_conf + area_factor * w_area + growth * w_growth + smoke * w_smoke
     score = float(np.clip(raw * 100.0, 0.0, 100.0))
 
     # Non-linear boost for immediate threats (high confidence + large area)

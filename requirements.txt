@@ -1,46 +1,52 @@
-# Streamlit Community Cloud / slim installs: smaller, no pygame/supervisor/mlflow dev stack.
-# Full install: pip install -r requirements-full.txt
+# requirements.txt — HuggingFace Spaces Docker + Streamlit Community Cloud
+# Training deps: requirements-full.txt | Dev tools: requirements-dev.txt
+
+# Core CV/ML
+opencv-python-headless==4.9.0.80
 ultralytics==8.2.103
 torch==2.2.2
 torchvision==0.17.2
+
+# EfficientNetV2 + XAI
+grad-cam==1.5.2
+
+# Similarity search
+faiss-cpu==1.8.0
+transformers==4.41.2
+
+# LLM
+groq==0.9.0
+
+# API
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+websockets==12.0
+python-multipart==0.0.9
+httpx==0.27.0
+aiohttp==3.9.5
+
+# Dashboard
+streamlit==1.36.0
+plotly==5.22.0
 Pillow==10.3.0
 numpy==1.26.4
 pandas==2.2.2
 matplotlib==3.8.4
 seaborn==0.13.2
-plotly==5.22.0
 
-streamlit==1.36.0
-fastapi==0.111.0
-uvicorn[standard]==0.30.1
-websockets==12.0
-python-multipart==0.0.9
-
-grad-cam==1.5.2
-transformers==4.41.2
-faiss-cpu==1.8.0
-
-groq==0.9.0
-gTTS==2.5.1
-
-python-telegram-bot==21.2
-httpx==0.27.0
-aiohttp==3.9.5
-
+# Database
 SQLAlchemy==2.0.30
 alembic==1.13.1
+
+# Alerts
+gTTS==2.5.1
+python-telegram-bot==21.2
+
+# Config & utils
 pydantic==2.7.4
 pydantic-settings==2.3.4
-
-albumentations==1.4.10
-
 python-dotenv==1.0.1
 loguru==0.7.2
 rich==13.7.1
 tqdm==4.66.4
 schedule==1.2.2
-
-yt-dlp==2024.7.2
-
-# Install after ultralytics so headless OpenCV wins over ultralytics' opencv-python dependency.
-opencv-python-headless==4.9.0.80

@@ -22,6 +22,13 @@ if str(_ROOT) not in sys.path:
 from config.settings import get_settings
 from database.models import Detection
 from database.session import SessionLocal
+from database.migrations.init_db import init_db
+
+try:
+    init_db()
+except Exception as e:
+    from utils.logger import logger
+    logger.warning(f"Database auto-init failed on dashboard startup: {e}")
 
 
 st.set_page_config(
@@ -39,15 +46,30 @@ if css_path.exists():
 
 
 @st.cache_resource
-def get_engine():
+def load_detector():
     """Cached inference engine for Streamlit."""
-
     from inference.detector import InferenceEngine
+    return InferenceEngine()
 
-    with st.spinner(
-        "Loading YOLO model (first visit may download weights — can take a few minutes on slow networks)…"
-    ):
-        return InferenceEngine()
+
+@st.cache_resource
+def get_db_engine():
+    """Cached DB engine for Streamlit."""
+    from database.session import init_engine
+    return init_engine()
+
+
+@st.cache_resource
+def load_similarity_search():
+    """Cached similarity search index for Streamlit."""
+    from llm.faiss_history import FaissHistory
+    return FaissHistory()
+
+
+@st.cache_resource
+def get_engine():
+    """Cached inference engine wrapper for backwards compatibility."""
+    return load_detector()
 
 
 @st.cache_resource
@@ -61,11 +83,8 @@ def get_summarizer():
 
 @st.cache_resource
 def get_faiss():
-    """Cached FAISS history index."""
-
-    from llm.faiss_history import FaissHistory
-
-    return FaissHistory()
+    """Cached FAISS history index wrapper for backwards compatibility."""
+    return load_similarity_search()
 
 
 def _get_today_stats() -> Dict[str, int]:
@@ -180,4 +199,3 @@ with st.sidebar:
         f'</div>',
         unsafe_allow_html=True,
     )
-

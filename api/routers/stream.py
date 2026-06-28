@@ -23,7 +23,7 @@ async def ws_stream(websocket: WebSocket) -> None:
     """
 
     await websocket.accept()
-    engine = InferenceEngine()
+    engine = InferenceEngine.get_shared_instance()
     try:
         while True:
             msg = await websocket.receive_text()

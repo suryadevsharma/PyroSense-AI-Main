@@ -48,8 +48,18 @@ class SimilarItem:
         }
 
 
+_SHARED_FAISS: Optional[FaissHistory] = None
+
+
 class FaissHistory:
     """Persistent FAISS index with CLIP embeddings."""
+
+    @classmethod
+    def get_shared_instance(cls) -> FaissHistory:
+        global _SHARED_FAISS
+        if _SHARED_FAISS is None:
+            _SHARED_FAISS = cls()
+        return _SHARED_FAISS
 
     def __init__(self) -> None:
         self.settings = get_settings()

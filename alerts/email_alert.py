@@ -8,12 +8,15 @@ Example:
 from __future__ import annotations
 
 import smtplib
+import time
 from dataclasses import dataclass
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 from pathlib import Path
 from typing import Optional
 
+from config.settings import get_settings
 from utils.logger import logger
 
 
@@ -21,6 +24,57 @@ from utils.logger import logger
 class EmailResult:
     ok: bool
     error: Optional[str]
+
+
+# Respect ALERT_COOLDOWN_SECONDS — use a module-level timestamp to prevent spam.
+LAST_EMAIL_SENT_AT = 0.0
+
+
+def send_email_alert(subject: str, body: str, snapshot_bytes: Optional[bytes] = None) -> EmailResult:
+    """Send a plain text email alert with optional snapshot attachment."""
+    global LAST_EMAIL_SENT_AT
+    settings = get_settings()
+    if not settings.email_enabled:
+        return EmailResult(ok=False, error="Email disabled")
+
+    # Cooldown check
+    cooldown = float(settings.alert_cooldown_seconds)
+    now = time.time()
+    if now - LAST_EMAIL_SENT_AT < cooldown:
+        logger.info("Email alert throttled due to cooldown")
+        return EmailResult(ok=False, error="Cooldown active")
+
+    EMAIL_USER = settings.email_user
+    EMAIL_PASSWORD = settings.email_password
+    EMAIL_RECIPIENT = settings.email_recipient
+    EMAIL_SMTP_HOST = settings.email_smtp_host
+    EMAIL_SMTP_PORT = settings.email_smtp_port
+
+    if not (EMAIL_USER and EMAIL_PASSWORD and EMAIL_RECIPIENT):
+        return EmailResult(ok=False, error="Missing email configuration credentials")
+
+    msg = MIMEMultipart('mixed')
+    msg['Subject'] = subject
+    msg['From'] = EMAIL_USER
+    msg['To'] = EMAIL_RECIPIENT
+    msg.attach(MIMEText(body, 'plain'))
+    if snapshot_bytes:
+        img = MIMEImage(snapshot_bytes)
+        img.add_header('Content-Disposition', 'attachment', filename='snapshot.jpg')
+        msg.attach(img)
+
+    try:
+        with smtplib.SMTP(EMAIL_SMTP_HOST, EMAIL_SMTP_PORT, timeout=10) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(EMAIL_USER, EMAIL_PASSWORD)
+            server.sendmail(EMAIL_USER, [EMAIL_RECIPIENT], msg.as_string())
+        LAST_EMAIL_SENT_AT = now
+        logger.info("Email alert sent successfully.")
+        return EmailResult(ok=True, error=None)
+    except Exception as e:
+        logger.error(f"Email send failed: {e}")
+        return EmailResult(ok=False, error=str(e))
 
 
 class EmailAlert:
@@ -73,11 +127,11 @@ class EmailAlert:
         msg.attach(MIMEText(body, "html"))
 
         try:
-            server = smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=10)
-            server.starttls()
-            server.login(self.user, self.password)
-            server.sendmail(self.user, [self.recipient], msg.as_string())
-            server.quit()
+            with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=10) as server:
+                server.ehlo()
+                server.starttls()
+                server.login(self.user, self.password)
+                server.sendmail(self.user, [self.recipient], msg.as_string())
             logger.info("Email alert sent.")
             return EmailResult(ok=True, error=None)
         except Exception as e:

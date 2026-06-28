@@ -26,10 +26,26 @@ from database import crud
 from database.session import SessionLocal
 from utils.logger import logger
 
-from alerts.audio_alert import AudioAlert
-from alerts.email_alert import EmailAlert
-from alerts.telegram_alert import TelegramAlert
-from alerts.webhook_dispatcher import WebhookDispatcher
+try:
+    from alerts.audio_alert import AudioAlert
+except ImportError:
+    AudioAlert = None
+
+try:
+    from alerts.email_alert import EmailAlert
+except ImportError:
+    EmailAlert = None
+
+try:
+    from alerts.telegram_alert import TelegramAlert
+except ImportError:
+    TelegramAlert = None
+
+try:
+    from alerts.webhook_dispatcher import WebhookDispatcher
+except ImportError:
+    WebhookDispatcher = None
+
 
 
 @dataclass
@@ -47,10 +63,10 @@ class AlertManager:
 
         self._email: Optional[EmailAlert] = None
         self._telegram: Optional[TelegramAlert] = None
-        self._audio = AudioAlert()
+        self._audio = AudioAlert() if AudioAlert else None
         self._webhook: Optional[WebhookDispatcher] = None
 
-        if self.settings.email_enabled and self.settings.email_user and self.settings.email_password and self.settings.email_recipient:
+        if EmailAlert and self.settings.email_enabled and self.settings.email_user and self.settings.email_password and self.settings.email_recipient:
             self._email = EmailAlert(
                 smtp_host=self.settings.email_smtp_host,
                 smtp_port=self.settings.email_smtp_port,
@@ -58,9 +74,9 @@ class AlertManager:
                 password=self.settings.email_password,
                 recipient=self.settings.email_recipient,
             )
-        if self.settings.telegram_enabled and self.settings.telegram_bot_token and self.settings.telegram_chat_id:
+        if TelegramAlert and self.settings.telegram_enabled and self.settings.telegram_bot_token and self.settings.telegram_chat_id:
             self._telegram = TelegramAlert(bot_token=self.settings.telegram_bot_token, chat_id=self.settings.telegram_chat_id)
-        if self.settings.webhook_enabled and self.settings.webhook_url:
+        if WebhookDispatcher and self.settings.webhook_enabled and self.settings.webhook_url:
             self._webhook = WebhookDispatcher(str(self.settings.webhook_url))
 
     def _cooldown_ok(self, channel: str) -> bool:
@@ -95,7 +111,7 @@ class AlertManager:
         else:
             self._log_skip(detection_id, "telegram")
 
-        if self._cooldown_ok("audio"):
+        if self._audio and self._cooldown_ok("audio"):
             tasks.append(self._send_audio(detection_payload, detection_id=detection_id, location=location))
         else:
             self._log_skip(detection_id, "audio")
@@ -121,15 +137,20 @@ class AlertManager:
             risk = payload.get("risk") or {}
             llm_summary = str(payload.get("llm_summary", ""))
             subject = f"[PyroSense AI] {primary.upper()} alert"
-            r = self._email.send(
-                subject=subject,
-                timestamp=ts,
-                location=location,
-                class_name=primary,
-                confidence_pct=conf,
-                risk_score=float(risk.get("score", 0.0)),
-                risk_severity=str(risk.get("severity", "LOW")),
-                llm_summary=llm_summary,
+            # Wrap in run_in_executor
+            loop = asyncio.get_running_loop()
+            r = await loop.run_in_executor(
+                None,
+                lambda: self._email.send(
+                    subject=subject,
+                    timestamp=ts,
+                    location=location,
+                    class_name=primary,
+                    confidence_pct=conf,
+                    risk_score=float(risk.get("score", 0.0)),
+                    risk_severity=str(risk.get("severity", "LOW")),
+                    llm_summary=llm_summary,
+                )
             )
             with SessionLocal() as db:
                 crud.create_alert_log(
@@ -220,4 +241,42 @@ class AlertManager:
             logger.warning(f"Webhook channel failed: {e}")
             with SessionLocal() as db:
                 crud.create_alert_log(db, detection_id=detection_id, channel="webhook", status="failed", sent_at=None, error_msg=str(e))
+
+    async def send_single_alert(self, channel: str, message: str, detection_id: int, location: str, payload: dict) -> dict:
+        """Send an alert to a single channel directly, respecting channel configuration and cooldown."""
+        if channel not in self._state:
+            return {"status": "failed", "error": f"Invalid channel: {channel}"}
+
+        if not self._cooldown_ok(channel):
+            self._log_skip(detection_id, channel)
+            return {"status": "skipped", "reason": f"Cooldown active for channel: {channel}"}
+
+        temp_payload = dict(payload)
+        temp_payload["llm_summary"] = message
+
+        try:
+            if channel == "email":
+                if not self._email:
+                    return {"status": "failed", "error": "Email channel is not configured or disabled"}
+                await self._send_email(temp_payload, detection_id=detection_id, location=location)
+                return {"status": "success", "channel": "email"}
+            elif channel == "telegram":
+                if not self._telegram:
+                    return {"status": "failed", "error": "Telegram channel is not configured or disabled"}
+                await self._send_telegram(temp_payload, detection_id=detection_id, location=location)
+                return {"status": "success", "channel": "telegram"}
+            elif channel == "webhook":
+                if not self._webhook:
+                    return {"status": "failed", "error": "Webhook channel is not configured or disabled"}
+                await self._send_webhook(temp_payload, detection_id=detection_id, location=location)
+                return {"status": "success", "channel": "webhook"}
+            elif channel == "audio":
+                await self._send_audio(temp_payload, detection_id=detection_id, location=location)
+                return {"status": "success", "channel": "audio"}
+        except Exception as e:
+            logger.warning(f"Failed to send alert on channel {channel}: {e}")
+            return {"status": "failed", "error": str(e)}
+
+        return {"status": "failed", "error": f"Channel {channel} is not handled or configured"}
+
 

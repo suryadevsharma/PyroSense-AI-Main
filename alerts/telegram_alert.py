@@ -42,13 +42,17 @@ class TelegramAlert:
     async def send_message(self, text: str) -> TelegramResult:
         try:
             from telegram import Bot
+            from telegram.error import TelegramError
         except Exception as e:
             return TelegramResult(ok=False, error=f"python-telegram-bot unavailable: {e}")
 
         try:
-            bot = Bot(token=self.bot_token)
-            await bot.send_message(chat_id=self.chat_id, text=text)
+            async with Bot(token=self.bot_token) as bot:
+                await bot.send_message(chat_id=self.chat_id, text=text)
             return TelegramResult(ok=True, error=None)
+        except TelegramError as e:
+            logger.warning(f"Telegram send_message failed (TelegramError): {e}")
+            return TelegramResult(ok=False, error=str(e))
         except Exception as e:
             logger.warning(f"Telegram send_message failed: {e}")
             return TelegramResult(ok=False, error=str(e))
@@ -56,6 +60,7 @@ class TelegramAlert:
     async def send_photo(self, image_bgr, caption: str) -> TelegramResult:
         try:
             from telegram import Bot
+            from telegram.error import TelegramError
         except Exception as e:
             return TelegramResult(ok=False, error=f"python-telegram-bot unavailable: {e}")
 
@@ -65,9 +70,12 @@ class TelegramAlert:
 
             b64 = encode_image_base64_jpeg(image_bgr)
             buf = BytesIO(base64.b64decode(b64))
-            bot = Bot(token=self.bot_token)
-            await bot.send_photo(chat_id=self.chat_id, photo=buf, caption=caption)
+            async with Bot(token=self.bot_token) as bot:
+                await bot.send_photo(chat_id=self.chat_id, photo=buf, caption=caption)
             return TelegramResult(ok=True, error=None)
+        except TelegramError as e:
+            logger.warning(f"Telegram send_photo failed (TelegramError): {e}")
+            return TelegramResult(ok=False, error=str(e))
         except Exception as e:
             logger.warning(f"Telegram send_photo failed: {e}")
             return TelegramResult(ok=False, error=str(e))
@@ -156,10 +164,49 @@ def build_telegram_application(get_snapshot_bgr: Callable[[], Any]):
         override_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         await update.message.reply_text(f"Updated confidence threshold override to {value:.2f}. Restart services to apply.")
 
-    app = Application.builder().token(settings.telegram_bot_token).build()
-    app.add_handler(CommandHandler("status", cmd_status))
-    app.add_handler(CommandHandler("snapshot", cmd_snapshot))
-    app.add_handler(CommandHandler("history", cmd_history))
-    app.add_handler(CommandHandler("threshold", cmd_threshold))
-    return app
+    try:
+        from telegram.error import TelegramError
+        app = Application.builder().token(settings.telegram_bot_token).build()
+        app.add_handler(CommandHandler("status", cmd_status))
+        app.add_handler(CommandHandler("snapshot", cmd_snapshot))
+        app.add_handler(CommandHandler("history", cmd_history))
+        app.add_handler(CommandHandler("threshold", cmd_threshold))
+        return app
+    except TelegramError as e:
+        logger.warning(f"Failed to build Telegram application (TelegramError): {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to build Telegram application: {e}")
+        return None
+
+
+def start_telegram_bot():
+    """Start Telegram Bot polling in a background thread."""
+    import threading
+    import asyncio
+
+    settings = get_settings()
+    if not (settings.telegram_enabled and settings.telegram_bot_token and settings.telegram_chat_id):
+        logger.info("Telegram bot not enabled or missing token/chat_id; skipping polling start.")
+        return
+
+    def _thread_target():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            from utils.image_utils import get_last_processed_frame
+            app = build_telegram_application(get_last_processed_frame)
+            if app is None:
+                logger.warning("Telegram bot application could not be built.")
+                return
+            logger.info("Starting Telegram bot polling in background thread...")
+            app.run_polling(close_loop=True, stop_signals=None)
+        except Exception as e:
+            logger.error(f"Error in Telegram bot polling thread: {e}")
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=_thread_target, daemon=True, name="TelegramBotPolling")
+    t.start()
+
 

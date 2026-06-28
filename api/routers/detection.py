@@ -46,9 +46,9 @@ async def detect(
     """Run detection on an uploaded image and return JSON with artifacts."""
 
     settings = get_settings()
-    engine = InferenceEngine()
+    engine = InferenceEngine.get_shared_instance()
     summarizer = IncidentSummarizer()
-    faiss_hist = FaissHistory()
+    faiss_hist = FaissHistory.get_shared_instance()
 
     raw = await file.read()
     from PIL import Image
@@ -69,16 +69,7 @@ async def detect(
     _save_image(snap_path, frame)
     _save_image(heat_path, heat_three)
 
-    # LLM summary
-    from models.yolo_detector import DetectionResult
-
-    # Rebuild a DetectionResult for summarizer using YOLO detection output from engine
-    # (payload includes per-box info; summary uses the internal DetectionResult if available)
-    det_res = engine.yolo.detect_image(frame)
-    llm_summary = summarizer.summarize(det_res, location=location)
-    payload["llm_summary"] = llm_summary
-
-    # Save to DB
+    # Save to DB first with a placeholder summary, so we get the detection ID
     boxes = [tuple(d["bbox_xyxy"]) for d in payload.get("detections", [])]
     primary_class = str(payload.get("primary_class", "none"))
     conf = float(payload.get("ensemble_conf", 0.0))
@@ -91,7 +82,7 @@ async def detect(
         boxes_xyxy=boxes,
         frame_path=str(snap_path),
         heatmap_path=str(heat_path),
-        llm_summary=llm_summary,
+        llm_summary="Agent analysis in progress...",
         source=source,
         risk_score=float(risk.get("score", 0.0)),
     )
@@ -106,12 +97,51 @@ async def detect(
     )
     similar = faiss_hist.search_similar(frame, top_k=3)
 
-    # Trigger alerts (async)
-    try:
-        am = AlertManager()
-        await am.trigger_alert(payload, detection_id=det_row.id, location=location)
-    except Exception as e:
-        logger.warning(f"Alert dispatch failed: {e}")
+    # Agent or Fallback execution flow
+    run_agent_flow = bool(settings.llm_provider == "groq" and settings.groq_api_key)
+    agent_success = False
+    llm_summary = ""
+
+    if run_agent_flow:
+        try:
+            agent_context = {
+                "risk_score": float(risk.get("score", 0.0)),
+                "severity": str(risk.get("severity", "LOW")),
+                "bbox": boxes,
+                "confidence": conf,
+                "timestamp": str(payload.get("timestamp")),
+                "location": location,
+            }
+            agent_res = await summarizer.run_agent(
+                context=agent_context,
+                frame=frame,
+                db=db,
+                detection_id=det_row.id,
+                payload=payload,
+            )
+            llm_summary = agent_res.get("summary", "")
+            det_row.llm_summary = llm_summary
+            db.commit()
+            payload["llm_summary"] = llm_summary
+            agent_success = True
+            logger.info(f"Agent successfully processed detection. Actions: {agent_res.get('action_taken')}")
+        except Exception as e:
+            logger.warning(f"Agent flow failed: {e}. Falling back to standard pipeline.")
+
+    if not agent_success:
+        # Fallback: run original rule-based pipeline
+        from models.yolo_detector import DetectionResult
+        det_res = engine.yolo.detect_image(frame)
+        llm_summary = summarizer.summarize(det_res, location=location)
+        det_row.llm_summary = llm_summary
+        db.commit()
+        payload["llm_summary"] = llm_summary
+
+        try:
+            am = AlertManager()
+            await am.trigger_alert(payload, detection_id=det_row.id, location=location)
+        except Exception as e:
+            logger.warning(f"Fallback alert dispatch failed: {e}")
 
     # Build response
     base = "/artifacts"

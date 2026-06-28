@@ -4,6 +4,13 @@ maxMessageSize = 1024
 enableXsrfProtection = false
 enableCORS = false
 enableWebsocketCompression = false
+runOnSave = false
+
+[browser]
+gatherUsageStats = false
+
+[runner]
+fastReruns = true
 
 [theme]
 base = "light"

@@ -204,12 +204,26 @@ def main() -> None:
         pdf_bytes = _simple_pdf_bytes("PyroSense AI Incident Report", llm)
         d2.download_button("DOWNLOAD REPORT PDF", data=pdf_bytes, file_name="pyrosense_report.pdf", mime="application/pdf")
 
-        if d3.button("ADD TO EVIDENCE"):
-            ev = Path("data/processed/evidence.jsonl")
-            ev.parent.mkdir(parents=True, exist_ok=True)
-            item = {"timestamp": datetime.now(timezone.utc).isoformat(), "file": up.name, "summary": llm, "detections": rows}
-            ev.write_text(ev.read_text(encoding="utf-8") + json.dumps(item) + "\n" if ev.exists() else json.dumps(item) + "\n", encoding="utf-8")
-            st.success("Added to evidence log.")
+        st.markdown("### Similar Incidents Lookup")
+        if st.checkbox("Show Similar Incidents"):
+            from dashboard.app import load_similarity_search
+            searcher = load_similarity_search()
+            similar = searcher.search_similar(frame, top_k=3)
+            if similar:
+                for s in similar:
+                    cols = st.columns([1, 4])
+                    if s.get("frame_path"):
+                        from pathlib import Path
+                        fp = Path(s["frame_path"])
+                        if fp.exists():
+                            cols[0].image(str(fp))
+                    cols[1].markdown(
+                        f"**Incident #{s['detection_id']}**  \n"
+                        f"Class: {s['class_name']} | Match Score: {s['score']:.2%}  \n"
+                        f"Time: {s['timestamp']}"
+                    )
+            else:
+                st.info("No similar incidents found.")
         return
 
     # Video path: quick processing preview

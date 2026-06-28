@@ -63,10 +63,20 @@ class EnsembleResult:
         }
 
 
+_SHARED_ENGINE: Optional[InferenceEngine] = None
+
+
 class InferenceEngine:
     """High-level inference engine used by API and dashboard."""
 
     VALID_DETECTION_CLASSES = frozenset(["fire", "smoke", "flame"])
+
+    @classmethod
+    def get_shared_instance(cls) -> InferenceEngine:
+        global _SHARED_ENGINE
+        if _SHARED_ENGINE is None:
+            _SHARED_ENGINE = cls()
+        return _SHARED_ENGINE
 
     def __init__(self) -> None:
         """Initialize models from settings.
@@ -127,6 +137,8 @@ class InferenceEngine:
         """Detect fire/smoke on an image and compute ensemble + risk."""
 
         image_bgr = ensure_bgr_uint8(image_bgr)
+        from utils.image_utils import set_last_processed_frame
+        set_last_processed_frame(image_bgr)
         det = self.yolo.detect_image(image_bgr)
         if not det.scores:
             result = EnsembleResult(

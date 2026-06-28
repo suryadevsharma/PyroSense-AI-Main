@@ -67,14 +67,17 @@ class StreamProcessor:
         from utils.image_utils import pil_to_bgr
         from PIL import Image
 
-        # Prefer labeled synthetic validation images (if present) so demo mode shows detections immediately.
         candidates: list[Path] = []
-        synth_val = Path("data/processed/dfire/images/val")
-        if synth_val.exists():
-            candidates.extend(sorted([x for x in synth_val.glob("*.jpg")]))
-
+        # Prefer realistic assets in data/samples/ first
         p = Path(self.samples_dir)
-        candidates.extend(sorted([x for x in p.glob("*") if x.suffix.lower() in {".jpg", ".jpeg", ".png"}]))
+        if p.exists():
+            candidates.extend(sorted([x for x in p.glob("*") if x.suffix.lower() in {".jpg", ".jpeg", ".png"}]))
+
+        # Only fall back to synthetic validation images if realistic ones are missing
+        if not candidates:
+            synth_val = Path("data/processed/dfire/images/val")
+            if synth_val.exists():
+                candidates.extend(sorted([x for x in synth_val.glob("*.jpg")]))
 
         # De-duplicate while preserving order
         seen = set()

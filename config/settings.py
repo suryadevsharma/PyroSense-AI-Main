@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     iou_threshold: float = Field(default=0.45, alias="IOU_THRESHOLD", ge=0.0, le=1.0)
     device: Literal["auto", "cpu", "cuda", "mps"] = Field(default="auto", alias="DEVICE")
     enable_efficientnet: bool = Field(
-        default=True,
+        default=False,
         validation_alias=AliasChoices("ENABLE_EFFICIENTNET", "enable_efficientnet"),
         description="Secondary EfficientNet verifier (slow first load; set false for YOLO-only, faster startup).",
     )
@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     database_url: str = Field(default_factory=_default_database_url, alias="DATABASE_URL")
 
     # LLM
-    llm_provider: Literal["groq", "ollama"] = Field(default="groq", alias="LLM_PROVIDER")
+    llm_provider: Literal["groq", "ollama", "fallback"] = Field(default="groq", alias="LLM_PROVIDER")
     groq_api_key: Optional[str] = Field(default=None, alias="GROQ_API_KEY")
     groq_model: str = Field(default="llama3-8b-8192", alias="GROQ_MODEL")
     ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
@@ -84,6 +84,12 @@ class Settings(BaseSettings):
 
     # MLflow
     mlflow_tracking_uri: str = Field(default="./mlruns", alias="MLFLOW_TRACKING_URI")
+
+    # Risk Weights (overridable in settings UI)
+    risk_w_conf: float = Field(default=0.4, alias="RISK_W_CONF")
+    risk_w_area: float = Field(default=0.3, alias="RISK_W_AREA")
+    risk_w_growth: float = Field(default=0.2, alias="RISK_W_GROWTH")
+    risk_w_smoke: float = Field(default=0.1, alias="RISK_W_SMOKE")
 
     # Paths
     project_root: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[1])
@@ -118,6 +124,34 @@ def get_settings() -> Settings:
 
     s = Settings()
     s.ensure_dirs()
+
+    # Load settings overrides from settings_override.json if it exists
+    override_path = s.project_root / "data" / "processed" / "settings_override.json"
+    if override_path.exists():
+        try:
+            import json
+            data = json.loads(override_path.read_text(encoding="utf-8"))
+            for k, v in data.items():
+                field_name = k.lower()
+                if hasattr(s, field_name):
+                    # Convert to appropriate types
+                    field_type = s.__annotations__.get(field_name)
+                    if field_type is bool:
+                        setattr(s, field_name, bool(v))
+                    elif field_type is float:
+                        setattr(s, field_name, float(v))
+                    elif field_type is int:
+                        setattr(s, field_name, int(v))
+                    else:
+                        setattr(s, field_name, v)
+        except Exception as e:
+            from utils.logger import logger
+            logger.warning(f"Failed to load settings override JSON: {e}")
+
+    if s.llm_provider == "groq" and not s.groq_api_key:
+        from utils.logger import logger
+        logger.warning("GROQ_API_KEY is missing. Falling back to rule-based summary (llm_provider='fallback').")
+        s.llm_provider = "fallback"
     return s
 
 

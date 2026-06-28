@@ -152,3 +152,17 @@ def bbox_area_ratio(bbox_xyxy: Tuple[float, float, float, float], frame_shape: T
     denom = float(max(1, fw * fh))
     return float(area / denom)
 
+
+LAST_PROCESSED_FRAME = None
+
+
+def get_last_processed_frame():
+    """Retrieve the last processed image frame (BGR numpy array or None)."""
+    return LAST_PROCESSED_FRAME
+
+
+def set_last_processed_frame(frame: np.ndarray) -> None:
+    """Store the last processed image frame globally."""
+    global LAST_PROCESSED_FRAME
+    LAST_PROCESSED_FRAME = frame
+

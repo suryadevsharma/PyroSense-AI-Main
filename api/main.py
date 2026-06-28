@@ -22,18 +22,31 @@ from fastapi.staticfiles import StaticFiles
 from api.routers import detection, health, history, stream
 from config.settings import get_settings
 from database.migrations.init_db import init_db
+from inference.detector import InferenceEngine
 from utils.logger import logger
 
+detector: InferenceEngine | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize resources on startup and clean up on shutdown."""
-
+    global detector
     settings = get_settings()
     try:
         init_db()
     except Exception as e:
         logger.warning(f"DB init failed on startup: {e}")
+
+    try:
+        from alerts.telegram_alert import start_telegram_bot
+        start_telegram_bot()
+    except Exception as e:
+        logger.warning(f"Failed to start telegram bot background thread: {e}")
+
+    try:
+        detector = InferenceEngine()
+    except Exception as e:
+        logger.warning(f"Failed to pre-load detector on startup: {e}")
 
     logger.info("PyroSense API starting up.")
     yield
@@ -41,6 +54,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="PyroSense AI API", version="1.0.0", lifespan=lifespan)
+
+@app.get("/health")
+def health_endpoint():
+    return {"status": "ok", "model_loaded": detector is not None}
 
 app.add_middleware(
     CORSMiddleware,

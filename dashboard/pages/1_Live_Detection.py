@@ -246,14 +246,58 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
-        la = st.session_state.last_alert
+        # Query DB for latest alert status
+        alert_info_html = ""
+        try:
+            from database.models import AlertLog, Detection
+            with SessionLocal() as db:
+                latest_det = db.query(Detection).order_by(Detection.id.desc()).first()
+                if latest_det:
+                    logs = db.query(AlertLog).filter(AlertLog.detection_id == latest_det.id).all()
+                    
+                    email_log = next((l for l in logs if l.channel == "email"), None)
+                    tg_log = next((l for l in logs if l.channel == "telegram"), None)
+                    wh_log = next((l for l in logs if l.channel == "webhook"), None)
+                    
+                    def get_status_str(log_item):
+                        if not log_item:
+                            return "<span style='color:#9CA3AF;'>Disabled / Skipped</span>"
+                        if log_item.status == "sent":
+                            return "<span style='color:#10B981;'>✅ Delivered</span>"
+                        if log_item.status == "failed":
+                            return f"<span style='color:#EF4444;'>❌ Failed</span> <span style='font-size:9px;color:#EF4444;'>({log_item.error_msg or 'Unknown Error'})</span>"
+                        if log_item.status == "skipped":
+                            return f"<span style='color:#F59E0B;'>⚠️ Skipped</span> <span style='font-size:9px;color:#9CA3AF;'>({log_item.error_msg or 'cooldown'})</span>"
+                        return f"<span style='color:#6B7280;'>{log_item.status}</span>"
+
+                    email_status = get_status_str(email_log)
+                    tg_status = get_status_str(tg_log)
+                    wh_status = get_status_str(wh_log)
+                    
+                    ai_summary = "✅ Generated" if (latest_det.llm_summary and latest_det.llm_summary != "Agent analysis in progress...") else "⏳ Pending"
+                    db_status = f"✅ Saved (ID #{latest_det.id})"
+                    ts_str = latest_det.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')
+                    
+                    alert_info_html = (
+                        f"<b>Last Event:</b> {ts_str}<br/>"
+                        f"<b>Type:</b> {latest_det.class_name.upper()} ({latest_det.confidence:.2%})<br/>"
+                        f"<hr style='margin: 8px 0; border: none; border-top: 1px solid rgba(0,0,0,0.06);'/>"
+                        f"<b>Email:</b> {email_status}<br/>"
+                        f"<b>Telegram:</b> {tg_status}<br/>"
+                        f"<b>Webhook:</b> {wh_status}<br/>"
+                        f"<b>AI Summary:</b> {ai_summary}<br/>"
+                        f"<b>Database Log:</b> {db_status}"
+                    )
+                else:
+                    alert_info_html = "<div style='color:#9CA3AF;'>No alerts triggered yet.</div>"
+        except Exception as e:
+            alert_info_html = f"<div style='color:#EF4444;'>Error loading status: {e}</div>"
+
         alerts_box.markdown(
             f'<div class="pyro-card">'
-            f'<div style="font-family:monospace;font-size:10px;color:#9CA3AF;text-transform:uppercase;letter-spacing:0.12em;margin-bottom:10px;">ACTIVE ALERTS</div>'
+            f'<div style="font-family:monospace;font-size:10px;color:#9CA3AF;text-transform:uppercase;letter-spacing:0.12em;margin-bottom:10px;">ACTIVE ALERTS STATUS</div>'
             f'<div style="font-family:monospace;font-size:11px;color:#4B5563;line-height:1.7;">'
-            f'LAST: {la.get("sent_at", "-")}<br/>'
-            f'CHANNEL: {la.get("channel", "-")}<br/>'
-            f'STATUS: {la.get("status", "-")}'
+            f'{alert_info_html}'
             f'</div></div>',
             unsafe_allow_html=True,
         )
@@ -461,6 +505,7 @@ def main() -> None:
                     out_dir.mkdir(parents=True, exist_ok=True)
                     name = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f") + ".jpg"
                     cv2.imwrite(str(out_dir / name), frame_show)
+                    st.toast(f"📸 Screenshot saved: {name}")
 
                 recording = bool(st.session_state.get("_record", False))
                 if recording and cv2 is not None:
@@ -471,11 +516,13 @@ def main() -> None:
                         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
                         h, w = frame_show.shape[:2]
                         video_writer = cv2.VideoWriter(str(out_path), fourcc, 20.0, (w, h))
+                        st.toast("🔴 Recording started...")
                     video_writer.write(frame_show)
                 else:
                     if video_writer is not None:
                         video_writer.release()
                         video_writer = None
+                        st.toast("✅ Recording saved to data/processed/recordings/")
 
                 with left:
                     frame_slot.image(frame_show, channels="BGR")
