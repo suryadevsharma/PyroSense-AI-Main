@@ -79,28 +79,22 @@ class YOLODetector:
         from ultralytics import YOLO
 
         path = Path(self.model_path)
-        if path.exists():
-            try:
-                self.model = YOLO(self.model_path)
-                if self.device != "auto":
-                    self.model.to(self.device)
-                names = self._get_model_names(self.model)
-                if not self._names_look_like_fire_smoke(names):
-                    print(
-                        "[PyroSense] WARNING: Provided model is NOT a fire/smoke model. "
-                        f"Detected names={names}. Auto-downloading a fire/smoke model."
-                    )
-                    self.model_ready = False
-                    self._download_fire_model()
-                else:
-                    self.model_ready = True
-            except Exception as e:
-                print(f"[PyroSense] WARNING: Failed to load model at {self.model_path}: {e}")
-                self.model_ready = False
-                self._download_fire_model()
-        else:
-            self.model_ready = False
-            self._download_fire_model()
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Production model weights not found at '{self.model_path}'. "
+                "Please package trained weights before deployment."
+            )
+
+        print(f"Loading YOLO weights from {self.model_path}...")
+        try:
+            self.model = YOLO(self.model_path)
+            if self.device != "auto":
+                self.model.to(self.device)
+            self.model_ready = True
+            print("Loaded successfully.")
+            print("Inference engine ready.")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load YOLO model at {self.model_path}: {e}") from e
 
         self._model = self.model
 
@@ -141,125 +135,6 @@ class YOLODetector:
         vals = [str(v).lower() for v in names.values()]
         return (any("fire" in v or "flame" in v for v in vals)) and any("smoke" in v for v in vals)
 
-    def _download_fire_model(self) -> None:
-        """
-        Downloads a YOLOv8 model fine-tuned on fire and smoke detection.
-        Uses the best available public fire detection weights.
-        Falls back to training a quick model if download fails.
-        """
-
-        try:
-            from ultralytics import YOLO
-        except Exception as e:
-            print(f"[PyroSense] Ultralytics unavailable, cannot download model: {e}")
-            self.model_ready = False
-            return
-
-        # Prefer stable "raw/resolve" URLs (and keep sizes reasonable).
-        FIRE_MODEL_URLS = [
-            # HuggingFace YOLOv8n fire+smoke (small, reliable)
-            "https://huggingface.co/SHOU-ISD/fire-and-smoke/resolve/main/yolov8n.pt",
-            # Optional alternatives (may be larger)
-            "https://huggingface.co/SHOU-ISD/fire-and-smoke/resolve/main/best_ns.pt",
-        ]
-
-        os.makedirs("models/weights", exist_ok=True)
-        save_path = "models/weights/fire_smoke_yolov8.pt"
-
-        def _download_with_timeout(url: str, dst: str, *, timeout_s: float = 20.0, max_mb: int = 250) -> None:
-            req = urllib.request.Request(url, headers={"User-Agent": "PyroSenseAI/1.0"})
-            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-                length = resp.headers.get("Content-Length")
-                if length is not None:
-                    try:
-                        mb = int(length) / (1024 * 1024)
-                        if mb > max_mb:
-                            raise RuntimeError(f"Remote file too large ({mb:.0f}MB > {max_mb}MB)")
-                    except ValueError:
-                        pass
-                tmp = dst + ".part"
-                with open(tmp, "wb") as f:
-                    while True:
-                        chunk = resp.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                os.replace(tmp, dst)
-
-        for url in FIRE_MODEL_URLS:
-            try:
-                print(f"[PyroSense] Downloading fire detection model from {url}...")
-                _download_with_timeout(url, save_path, timeout_s=120.0, max_mb=250)
-                self.model = YOLO(save_path)
-                if self.device != "auto":
-                    self.model.to(self.device)
-                names = self._get_model_names(self.model)
-                if not self._names_look_like_fire_smoke(names):
-                    print(f"[PyroSense] WARNING: Downloaded weights are not fire/smoke model (names={names}).")
-                    self.model_ready = False
-                else:
-                    self.model_ready = True
-                    print("[PyroSense] Fire model downloaded successfully.")
-                    self._model = self.model
-                    return
-            except Exception as e:
-                print(f"[PyroSense] Download failed: {e}")
-
-        print("[PyroSense] Falling back to training on D-Fire dataset...")
-        self._auto_train_fire_model()
-
-    def _auto_train_fire_model(self) -> None:
-        """
-        Downloads D-Fire dataset (small split) and trains YOLOv8n for 20 epochs.
-        Creates a working fire/smoke model from scratch.
-        """
-
-        import subprocess
-
-        try:
-            subprocess.run(["python", "data/download_datasets.py", "--dataset", "dfire-mini"], check=False)
-        except Exception as e:
-            print(f"[PyroSense] Dataset download step failed: {e}")
-
-        # If the mini dataset yaml isn't present, fail fast so the app can still run in demo mode.
-        if not Path("data/processed/dfire/data.yaml").exists():
-            print("[PyroSense] Auto-train skipped: dfire-mini not prepared (data/processed/dfire/data.yaml missing).")
-            self.model_ready = False
-            return
-
-        try:
-            from ultralytics import YOLO
-        except Exception as e:
-            print(f"[PyroSense] Ultralytics unavailable, cannot train: {e}")
-            self.model_ready = False
-            return
-
-        model = YOLO("yolov8n.pt")
-        try:
-            try:
-                import torch
-
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-            except Exception:
-                device = "cpu"
-            model.train(
-                data="data/processed/dfire/data.yaml",
-                epochs=10,
-                imgsz=640,
-                project="models/weights",
-                name="fire_smoke_run",
-                exist_ok=True,
-                device=device,
-            )
-            best = "models/weights/fire_smoke_run/weights/best.pt"
-            self.model = YOLO(best)
-            if self.device != "auto":
-                self.model.to(self.device)
-            self.model_ready = True
-            self._model = self.model
-        except Exception as e:
-            print(f"[PyroSense] Auto-train failed: {e}")
-            self.model_ready = False
 
     def detect_image(self, image: np.ndarray) -> DetectionResult:
         """Run detection on a single image (BGR).
