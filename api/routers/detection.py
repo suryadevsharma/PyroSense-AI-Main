@@ -87,15 +87,23 @@ async def detect(
         risk_score=float(risk.get("score", 0.0)),
     )
 
-    # FAISS add + search
+    # Compute embedding once
+    try:
+        embedding = faiss_hist.embed(frame)
+    except Exception as e:
+        logger.warning(f"Failed to generate embedding: {e}")
+        embedding = None
+
+    # FAISS add + search using precomputed embedding
     faiss_hist.add_detection(
         detection_id=det_row.id,
         image_bgr=frame,
         frame_path=str(snap_path),
         class_name=primary_class,
         timestamp=payload.get("timestamp"),
+        embedding=embedding,
     )
-    similar = faiss_hist.search_similar(frame, top_k=3)
+    similar = faiss_hist.search_similar(frame, top_k=3, embedding=embedding)
 
     # Agent or Fallback execution flow
     run_agent_flow = bool(settings.llm_provider == "groq" and settings.groq_api_key)

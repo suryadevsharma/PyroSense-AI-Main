@@ -63,7 +63,7 @@ def get_db_engine():
 def load_similarity_search():
     """Cached similarity search index for Streamlit."""
     from llm.faiss_history import FaissHistory
-    return FaissHistory()
+    return FaissHistory.get_shared_instance()
 
 
 @st.cache_resource
@@ -87,17 +87,25 @@ def get_faiss():
     return load_similarity_search()
 
 
+@st.cache_data(ttl=5)
 def _get_today_stats() -> Dict[str, int]:
-    """Return today's summary without requiring extra CRUD helpers."""
+    """Return today's summary utilizing optimized SQL aggregation queries and cache."""
 
     try:
+        from sqlalchemy import func
         now = datetime.now(timezone.utc)
         start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
         with SessionLocal() as db:
-            rows = db.query(Detection).filter(Detection.timestamp >= start).all()
-        fire = sum(1 for r in rows if "fire" in (r.class_name or "").lower())
-        smoke = sum(1 for r in rows if "smoke" in (r.class_name or "").lower())
-        return {"total": len(rows), "fire": fire, "smoke": smoke, "alerts_sent": 0}
+            total = db.query(func.count(Detection.id)).filter(Detection.timestamp >= start).scalar() or 0
+            fire = db.query(func.count(Detection.id)).filter(
+                Detection.timestamp >= start,
+                Detection.class_name.ilike("%fire%")
+            ).scalar() or 0
+            smoke = db.query(func.count(Detection.id)).filter(
+                Detection.timestamp >= start,
+                Detection.class_name.ilike("%smoke%")
+            ).scalar() or 0
+        return {"total": int(total), "fire": int(fire), "smoke": int(smoke), "alerts_sent": 0}
     except Exception:
         return {"total": 0, "fire": 0, "smoke": 0, "alerts_sent": 0}
 

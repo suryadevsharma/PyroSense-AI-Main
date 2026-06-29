@@ -132,13 +132,17 @@ class FaissHistory:
         frame_path: Optional[str],
         class_name: Optional[str],
         timestamp: Optional[str],
+        embedding: Optional[np.ndarray] = None,
     ) -> None:
         """Add a detection frame to FAISS index."""
 
         if self._index is None:
             return
         try:
-            vec = self.embed(image_bgr)
+            if embedding is not None:
+                vec = embedding
+            else:
+                vec = self.embed(image_bgr)
         except Exception as e:
             logger.warning(f"Embedding unavailable; skipping FAISS add: {e}")
             return
@@ -156,17 +160,29 @@ class FaissHistory:
             f.write(json.dumps(meta) + "\n")
         faiss.write_index(self._index, str(self.index_path))
 
-    def search_similar(self, image_bgr: Optional[np.ndarray], top_k: int = 3) -> List[Dict[str, object]]:
+    def search_similar(
+        self,
+        image_bgr: Optional[np.ndarray],
+        top_k: int = 3,
+        embedding: Optional[np.ndarray] = None,
+    ) -> List[Dict[str, object]]:
         """Return top-k similar historical detections.
 
         Returns list of dicts compatible with Streamlit rendering.
         """
 
-        if image_bgr is None or self._index is None or not self._meta:
+        if self._index is None or not self._meta:
+            return []
+
+        if embedding is None and image_bgr is None:
             return []
 
         try:
-            vec = self.embed(image_bgr)
+            if embedding is not None:
+                vec = embedding
+            else:
+                assert image_bgr is not None
+                vec = self.embed(image_bgr)
         except Exception as e:
             logger.warning(f"Embedding unavailable; skipping FAISS search: {e}")
             return []
