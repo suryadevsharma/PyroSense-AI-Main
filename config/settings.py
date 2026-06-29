@@ -68,6 +68,9 @@ class Settings(BaseSettings):
 
     # Alerts
     alert_cooldown_seconds: PositiveInt = Field(default=60, alias="ALERT_COOLDOWN_SECONDS")
+    min_consecutive_detections: int = Field(default=3, alias="MIN_CONSECUTIVE_DETECTIONS")
+    incident_clear_seconds: int = Field(default=30, alias="INCIDENT_CLEAR_SECONDS")
+    max_alerts_per_incident: int = Field(default=3, alias="MAX_ALERTS_PER_INCIDENT")
     email_enabled: bool = Field(default=False, alias="EMAIL_ENABLED")
     email_smtp_host: str = Field(default="smtp.gmail.com", alias="EMAIL_SMTP_HOST")
     email_smtp_port: int = Field(default=587, alias="EMAIL_SMTP_PORT", ge=1, le=65535)

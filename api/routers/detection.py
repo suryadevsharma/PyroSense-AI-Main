@@ -139,7 +139,7 @@ async def detect(
 
         try:
             am = AlertManager()
-            await am.trigger_alert(payload, detection_id=det_row.id, location=location)
+            await am.trigger_alert(payload, detection_id=det_row.id, location=location, source=source)
         except Exception as e:
             logger.warning(f"Fallback alert dispatch failed: {e}")
 
