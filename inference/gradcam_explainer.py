@@ -116,7 +116,7 @@ class GradCamExplainer:
         x = torch.from_numpy(np.transpose(img, (2, 0, 1))[None, ...])
         x = x.to(next(model.parameters()).device if any(True for _ in model.parameters()) else "cpu")
 
-        cam = EigenCAM(model=model, target_layers=[target_layer], use_cuda=x.device.type == "cuda")
+        cam = EigenCAM(model=model, target_layers=[target_layer])
         grayscale_cam = cam(input_tensor=x, targets=None)[0]
         grayscale_cam = np.clip(grayscale_cam, 0.0, 1.0)
 
