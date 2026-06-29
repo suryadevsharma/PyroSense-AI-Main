@@ -85,7 +85,6 @@ def main() -> None:
         if st.button("Test Model"):
             try:
                 import numpy as np
-                from pathlib import Path
                 from PIL import Image
                 from utils.image_utils import pil_to_bgr
 

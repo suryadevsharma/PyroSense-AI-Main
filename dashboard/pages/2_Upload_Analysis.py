@@ -213,7 +213,6 @@ def main() -> None:
                 for s in similar:
                     cols = st.columns([1, 4])
                     if s.get("frame_path"):
-                        from pathlib import Path
                         fp = Path(s["frame_path"])
                         if fp.exists():
                             cols[0].image(str(fp))

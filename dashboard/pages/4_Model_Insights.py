@@ -159,8 +159,6 @@ def _benchmark(eng) -> Tuple[float, float]:
 
 
 def _confusion_matrix_plot():
-    from pathlib import Path
-
     val_dir = Path("data/processed/classifier/val")
     if not val_dir.exists():
         # Yield static demonstration matrix so the cloud demo doesn't look empty
