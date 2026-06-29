@@ -45,6 +45,47 @@ def _save_override(data: Dict[str, Any]) -> None:
     OVERRIDE_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def _mask_email(email: Optional[str]) -> str:
+    if not email:
+        return "Not Configured"
+    if "@" not in email:
+        return "********"
+    parts = email.split("@", 1)
+    user_part = parts[0]
+    domain_part = parts[1]
+    if len(user_part) <= 2:
+        return "**@" + domain_part
+    return user_part[:2] + "********@" + domain_part
+
+
+def _mask_credential(val: Optional[str], secret_name: str = "Secret") -> str:
+    if not val:
+        return "Not Configured"
+    return f"Configured via Hugging Face {secret_name}"
+
+
+def _mask_chat_id(chat_id: Optional[str]) -> str:
+    if not chat_id:
+        return "Not Configured"
+    chat_id_str = str(chat_id)
+    if len(chat_id_str) <= 3:
+        return "***"
+    return chat_id_str[:2] + "********"
+
+
+def _mask_database_url(url: str) -> str:
+    if "@" in url and "://" in url:
+        try:
+            proto, rest = url.split("://", 1)
+            credentials, location = rest.split("@", 1)
+            if ":" in credentials:
+                user, password = credentials.split(":", 1)
+                return f"{proto}://{user}:********@{location}"
+        except Exception:
+            pass
+    return url
+
+
 def main() -> None:
     try:
         st.set_page_config(page_title="PyroSense AI", page_icon="🔥", layout="wide", initial_sidebar_state="expanded")
@@ -110,17 +151,31 @@ def main() -> None:
     with st.expander("SECTION 2 — ALERT CHANNELS", expanded=False):
         # EMAIL
         st.markdown("<div class='pyro-card'>", unsafe_allow_html=True)
-        email_on = st.toggle("EMAIL", value=bool(override.get("EMAIL_ENABLED", s.email_enabled)))
-        smtp_host = st.text_input("SMTP Host", value=str(override.get("EMAIL_SMTP_HOST", s.email_smtp_host)))
-        smtp_port = st.number_input("SMTP Port", min_value=1, max_value=65535, value=int(override.get("EMAIL_SMTP_PORT", s.email_smtp_port)))
-        email_user = st.text_input("User", value=str(override.get("EMAIL_USER", s.email_user or "")))
-        email_pass = st.text_input("Password", value=str(override.get("EMAIL_PASSWORD", s.email_password or "")), type="password")
-        email_rec = st.text_input("Recipient", value=str(override.get("EMAIL_RECIPIENT", s.email_recipient or "")))
+        st.markdown("### 📧 Email Channel")
+        
+        email_configured = bool(s.email_user and s.email_password and s.email_recipient)
+        email_status = "✅ Loaded from Environment" if (s.email_enabled and email_configured) else ("❌ Disabled" if not s.email_enabled else "⚠️ Configuration Missing")
+        
+        st.markdown(
+            f"**SMTP Host**: `{s.email_smtp_host}`  \n"
+            f"**SMTP Port**: `{s.email_smtp_port}`  \n"
+            f"**SMTP User**: `{_mask_email(s.email_user)}`  \n"
+            f"**Password**: `{_mask_credential(s.email_password, 'EMAIL_PASSWORD')}`  \n"
+            f"**Recipient**: `{_mask_email(s.email_recipient)}`  \n"
+            f"**Status**: {email_status}"
+        )
+        
         if st.button("Send Test Email"):
-            if not (email_user and email_pass and email_rec):
-                st.error("Provide user/password/recipient.")
+            if not email_configured:
+                st.error("Email configuration is incomplete on the server.")
             else:
-                r = EmailAlert(smtp_host=smtp_host, smtp_port=int(smtp_port), user=email_user, password=email_pass, recipient=email_rec).send(
+                r = EmailAlert(
+                    smtp_host=s.email_smtp_host,
+                    smtp_port=int(s.email_smtp_port),
+                    user=s.email_user,
+                    password=s.email_password,
+                    recipient=s.email_recipient
+                ).send(
                     subject="[PyroSense] Test Email",
                     timestamp="now",
                     location="Settings",
@@ -138,17 +193,25 @@ def main() -> None:
 
         # TELEGRAM
         st.markdown("<div class='pyro-card'>", unsafe_allow_html=True)
-        tg_on = st.toggle("TELEGRAM", value=bool(override.get("TELEGRAM_ENABLED", s.telegram_enabled)))
-        tg_token = st.text_input("Bot Token", value=str(override.get("TELEGRAM_BOT_TOKEN", s.telegram_bot_token or "")), type="password")
-        tg_chat = st.text_input("Chat ID", value=str(override.get("TELEGRAM_CHAT_ID", s.telegram_chat_id or "")))
+        st.markdown("### 🤖 Telegram Channel")
+        
+        tg_configured = bool(s.telegram_bot_token and s.telegram_chat_id)
+        tg_status = "✅ Loaded from Environment" if (s.telegram_enabled and tg_configured) else ("❌ Disabled" if not s.telegram_enabled else "⚠️ Configuration Missing")
+        
+        st.markdown(
+            f"**Bot Token**: `{_mask_credential(s.telegram_bot_token, 'TELEGRAM_BOT_TOKEN')}`  \n"
+            f"**Chat ID**: `{_mask_chat_id(s.telegram_chat_id)}`  \n"
+            f"**Status**: {tg_status}"
+        )
+        
         if st.button("Send Test Message"):
-            if not (tg_token and tg_chat):
-                st.error("Provide bot token and chat id.")
+            if not tg_configured:
+                st.error("Telegram configuration is incomplete on the server.")
             else:
                 import asyncio
 
                 async def _send():
-                    tga = TelegramAlert(bot_token=tg_token, chat_id=tg_chat)
+                    tga = TelegramAlert(bot_token=s.telegram_bot_token, chat_id=s.telegram_chat_id)
                     return await tga.send_message("PyroSense AI test message ✅")
 
                 res = asyncio.get_event_loop().run_until_complete(_send())
@@ -160,20 +223,27 @@ def main() -> None:
 
         # WEBHOOK
         st.markdown("<div class='pyro-card'>", unsafe_allow_html=True)
-        wh_on = st.toggle("WEBHOOK", value=bool(override.get("WEBHOOK_ENABLED", s.webhook_enabled)))
-        wh_url = st.text_input("URL", value=str(override.get("WEBHOOK_URL", str(s.webhook_url or ""))))
-        wh_secret = st.text_input("Secret Header", value=str(override.get("WEBHOOK_SECRET", "")), type="password")
+        st.markdown("### 🔗 Webhook Channel")
+        
+        wh_configured = bool(s.webhook_url)
+        wh_status = "✅ Loaded from Environment" if (s.webhook_enabled and wh_configured) else ("❌ Disabled" if not s.webhook_enabled else "⚠️ Configuration Missing")
+        
+        wh_url_str = str(s.webhook_url) if s.webhook_url else "Not Configured"
+        st.markdown(
+            f"**URL**: `{wh_url_str}`  \n"
+            f"**Status**: {wh_status}"
+        )
+        
         if st.button("Test Webhook"):
-            if not wh_url:
-                st.error("Provide webhook URL.")
+            if not wh_configured:
+                st.error("Webhook configuration is incomplete on the server.")
             else:
                 import asyncio
                 import httpx
 
                 async def _go():
-                    headers = {"X-PyroSense-Secret": wh_secret} if wh_secret else {}
                     async with httpx.AsyncClient(timeout=8.0) as client:
-                        r = await client.post(wh_url, json={"test": True, "service": "pyrosense"}, headers=headers)
+                        r = await client.post(str(s.webhook_url), json={"test": True, "service": "pyrosense"})
                         return r.status_code, r.text[:200]
 
                 code, text = asyncio.get_event_loop().run_until_complete(_go())
@@ -182,22 +252,6 @@ def main() -> None:
                 else:
                     st.error(f"{code}: {text}")
         st.markdown("</div>", unsafe_allow_html=True)
-
-        if st.button("Save alert overrides"):
-            override["EMAIL_ENABLED"] = bool(email_on)
-            override["EMAIL_SMTP_HOST"] = smtp_host
-            override["EMAIL_SMTP_PORT"] = int(smtp_port)
-            override["EMAIL_USER"] = email_user
-            override["EMAIL_PASSWORD"] = email_pass
-            override["EMAIL_RECIPIENT"] = email_rec
-            override["TELEGRAM_ENABLED"] = bool(tg_on)
-            override["TELEGRAM_BOT_TOKEN"] = tg_token
-            override["TELEGRAM_CHAT_ID"] = tg_chat
-            override["WEBHOOK_ENABLED"] = bool(wh_on)
-            override["WEBHOOK_URL"] = wh_url
-            override["WEBHOOK_SECRET"] = wh_secret
-            _save_override(override)
-            st.success("Saved alert overrides. Restart services to apply.")
 
     with st.expander("SECTION 3 — RISK SCORING", expanded=False):
         cw = st.slider("Confidence weight", 0.0, 1.0, float(override.get("RISK_W_CONF", 0.4)), 0.05)
@@ -217,7 +271,7 @@ def main() -> None:
             st.success("Saved risk overrides.")
 
     with st.expander("SECTION 4 — SYSTEM", expanded=False):
-        st.write(f"Database: `{s.database_url}`")
+        st.write(f"Database: `{_mask_database_url(s.database_url)}`")
         confirm = st.checkbox("I understand this will delete all history")
         if st.button("Clear History", disabled=not confirm):
             with SessionLocal() as db:
