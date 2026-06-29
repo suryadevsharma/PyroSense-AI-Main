@@ -214,7 +214,7 @@ def main() -> None:
                     tga = TelegramAlert(bot_token=s.telegram_bot_token, chat_id=s.telegram_chat_id)
                     return await tga.send_message("PyroSense AI test message ✅")
 
-                res = asyncio.get_event_loop().run_until_complete(_send())
+                res = asyncio.run(_send())
                 if res.ok:
                     st.success("Sent.")
                 else:
@@ -246,7 +246,7 @@ def main() -> None:
                         r = await client.post(str(s.webhook_url), json={"test": True, "service": "pyrosense"})
                         return r.status_code, r.text[:200]
 
-                code, text = asyncio.get_event_loop().run_until_complete(_go())
+                code, text = asyncio.run(_go())
                 if 200 <= code < 300:
                     st.success(f"Webhook responded: {code}")
                 else:
