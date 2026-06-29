@@ -29,7 +29,7 @@ def _default_database_url() -> str:
     except OSError:
         return "sqlite:////tmp/pyrosense.db"
 
-from pydantic import AliasChoices, Field, HttpUrl, PositiveInt
+from pydantic import AliasChoices, Field, HttpUrl, PositiveInt, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -93,6 +93,25 @@ class Settings(BaseSettings):
     risk_w_area: float = Field(default=0.3, alias="RISK_W_AREA")
     risk_w_growth: float = Field(default=0.2, alias="RISK_W_GROWTH")
     risk_w_smoke: float = Field(default=0.1, alias="RISK_W_SMOKE")
+
+    @field_validator("telegram_bot_token", "telegram_chat_id", "email_user", "email_password", "email_recipient", "groq_api_key", mode="before")
+    @classmethod
+    def clean_credentials(cls, v: Optional[str]) -> Optional[str]:
+        if isinstance(v, str):
+            # Strip standard quotes, trailing spaces, returns, and non-printable characters
+            cleaned = "".join(ch for ch in v.strip() if ch.isprintable())
+            cleaned = cleaned.strip("'\"")
+            return cleaned
+        return v
+
+    @field_validator("webhook_url", mode="before")
+    @classmethod
+    def clean_webhook_url(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            cleaned = "".join(ch for ch in v.strip() if ch.isprintable())
+            cleaned = cleaned.strip("'\"")
+            return cleaned
+        return v
 
     # Paths
     project_root: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[1])
