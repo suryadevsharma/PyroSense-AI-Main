@@ -43,11 +43,13 @@ class TelegramAlert:
         try:
             from telegram import Bot
             from telegram.error import TelegramError
+            from telegram.request import HTTPXRequest
         except Exception as e:
             return TelegramResult(ok=False, error=f"python-telegram-bot unavailable: {e}")
 
         try:
-            async with Bot(token=self.bot_token) as bot:
+            req = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
+            async with Bot(token=self.bot_token, request=req) as bot:
                 await bot.send_message(chat_id=self.chat_id, text=text)
             return TelegramResult(ok=True, error=None)
         except TelegramError as e:
@@ -61,6 +63,7 @@ class TelegramAlert:
         try:
             from telegram import Bot
             from telegram.error import TelegramError
+            from telegram.request import HTTPXRequest
         except Exception as e:
             return TelegramResult(ok=False, error=f"python-telegram-bot unavailable: {e}")
 
@@ -70,7 +73,8 @@ class TelegramAlert:
 
             b64 = encode_image_base64_jpeg(image_bgr)
             buf = BytesIO(base64.b64decode(b64))
-            async with Bot(token=self.bot_token) as bot:
+            req = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
+            async with Bot(token=self.bot_token, request=req) as bot:
                 await bot.send_photo(chat_id=self.chat_id, photo=buf, caption=caption)
             return TelegramResult(ok=True, error=None)
         except TelegramError as e:
@@ -166,7 +170,9 @@ def build_telegram_application(get_snapshot_bgr: Callable[[], Any]):
 
     try:
         from telegram.error import TelegramError
-        app = Application.builder().token(settings.telegram_bot_token).build()
+        from telegram.request import HTTPXRequest
+        req = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
+        app = Application.builder().token(settings.telegram_bot_token).request(req).build()
         app.add_handler(CommandHandler("status", cmd_status))
         app.add_handler(CommandHandler("snapshot", cmd_snapshot))
         app.add_handler(CommandHandler("history", cmd_history))
