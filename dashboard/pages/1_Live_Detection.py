@@ -497,7 +497,15 @@ def main() -> None:
                     payload = last_payload
                     payload["_fps"] = fps_smooth
                     dets = payload.get("detections") or []
-                    frame_show = _hud_overlay(fr, fps=fps_smooth, risk_score=last_risk_score)
+                    if dets:
+                        from utils.visualization import draw_boxes
+                        boxes = [tuple(d["bbox_xyxy"]) for d in dets if isinstance(d, dict) and "bbox_xyxy" in d]
+                        scores = [float(d["score"]) for d in dets if isinstance(d, dict) and "score" in d]
+                        class_names = [str(d["class_name"]) for d in dets if isinstance(d, dict) and "class_name" in d]
+                        annotated = draw_boxes(fr, boxes, scores, class_names)
+                    else:
+                        annotated = fr
+                    frame_show = _hud_overlay(annotated, fps=fps_smooth, risk_score=last_risk_score)
 
                 if st.session_state.get("_take_screenshot") and cv2 is not None:
                     st.session_state._take_screenshot = False
