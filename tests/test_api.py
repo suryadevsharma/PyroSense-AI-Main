@@ -48,7 +48,7 @@ async def test_agent_react_loop_and_tools():
     # Mock settings
     summarizer.settings = MagicMock()
     summarizer.settings.groq_api_key = "test_key"
-    summarizer.settings.groq_model = "llama3-8b-8192"
+    summarizer.settings.groq_model = "groq/compound-mini"
 
     # Mock Groq client
     mock_client = MagicMock()

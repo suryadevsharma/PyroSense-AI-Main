@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     # LLM
     llm_provider: Literal["groq", "ollama", "fallback"] = Field(default="groq", alias="LLM_PROVIDER")
     groq_api_key: Optional[str] = Field(default=None, alias="GROQ_API_KEY")
-    groq_model: str = Field(default="llama3-8b-8192", alias="GROQ_MODEL")
+    groq_model: str = Field(default="groq/compound-mini", alias="GROQ_MODEL")
     ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
     ollama_model: str = Field(default="llama3", alias="OLLAMA_MODEL")
 

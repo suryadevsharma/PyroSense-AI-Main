@@ -2,7 +2,7 @@ services:
   pyrosense-app:
     build: .
     ports:
-      - "8501:8501"
+      - "8501:7860"
       - "8000:8000"
     volumes:
       - ./data:/app/data

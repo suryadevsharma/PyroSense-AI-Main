@@ -1,7 +1,7 @@
 """LLM incident summarizer for PyroSense AI.
 
 Supports:
-  - Groq (cloud) llama3-8b-8192 via `groq` Python SDK
+  - Groq (cloud) groq/compound-mini via `groq` Python SDK
   - Ollama (local) via `ollama` Python client
   - Rule-based fallback when LLM is unavailable
 
@@ -92,25 +92,32 @@ class IncidentSummarizer:
             region_hint=region_hint,
         )
 
+        logger.info(f"Summarizer request received: location='{location}', class='{class_name}', provider='{self.settings.llm_provider}'")
         try:
             if self.settings.llm_provider == "fallback":
+                logger.info("Using rule-based fallback summary generation.")
                 return self._fallback_summary(ts=ts, location=location, class_name=class_name, conf=conf, region_hint=region_hint)
             if self.settings.llm_provider == "groq":
+                logger.info(f"Dispatching summary generation to Groq API using model '{self.settings.groq_model}'...")
                 return self._summarize_groq(prompt)
+            logger.info(f"Dispatching summary generation to Ollama API using model '{self.settings.ollama_model}'...")
             return self._summarize_ollama(prompt)
         except Exception as e:
-            logger.warning(f"LLM summary unavailable, using fallback: {e}")
+            logger.exception("LLM summary generation failed. Falling back to rule-based summary.")
             return self._fallback_summary(ts=ts, location=location, class_name=class_name, conf=conf, region_hint=region_hint)
 
     def _summarize_groq(self, prompt: str) -> str:
         try:
             from groq import Groq
         except Exception as e:
+            logger.error(f"Failed to import Groq SDK: {e}")
             raise RuntimeError(f"Groq SDK not available: {e}") from e
 
         if not self.settings.groq_api_key:
+            logger.error("groq_api_key is missing in settings when attempting Groq summary generation.")
             raise RuntimeError("GROQ_API_KEY is not set")
 
+        logger.info("Sending chat completion request to Groq...")
         client = Groq(api_key=self.settings.groq_api_key)
         resp = client.chat.completions.create(
             model=self.settings.groq_model,
@@ -118,6 +125,7 @@ class IncidentSummarizer:
             temperature=0.2,
             max_tokens=160,
         )
+        logger.info("Groq API response received successfully.")
         text = (resp.choices[0].message.content or "").strip()
         return self._normalize_three_sentences(text)
 

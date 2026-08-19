@@ -87,6 +87,25 @@ def _log_row(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _bg_summarize(det_id: int, det_res: Any, location: str) -> None:
+    """Generate Groq summary and update database row asynchronously."""
+    try:
+        from database.session import SessionLocal
+        from dashboard.app import get_summarizer
+        from database import crud
+        
+        summarizer = get_summarizer()
+        summary = summarizer.summarize(det_res, location=location)
+        
+        with SessionLocal() as db:
+            det = crud.get_detection(db, det_id)
+            if det:
+                det.llm_summary = summary
+                db.commit()
+    except Exception as e:
+        logger.warning(f"Background summary generation failed for detection #{det_id}: {e}")
+
+
 def main() -> None:
     try:
         st.set_page_config(page_title="PyroSense AI", page_icon="🔥", layout="wide", initial_sidebar_state="expanded")
@@ -120,17 +139,10 @@ def main() -> None:
     if "_last_db_save" not in st.session_state:
         st.session_state._last_db_save = 0.0
 
-    try:
-        eng = get_engine()
-        if efficientnet_enabled():
-            st.caption(
-                "EfficientNet verifier loads on the **first frame that contains a detection** (one-time download possible)."
-            )
-        if not getattr(eng.yolo, "model_ready", True):
-            st.warning("Fire/smoke model not ready yet. It may be downloading or training. Try again in a minute.")
-    except Exception as e:
-        st.warning(f"Model initialization failed: {e}")
-        return
+    if efficientnet_enabled():
+        st.caption(
+            "EfficientNet verifier loads on the **first frame that contains a detection** (one-time download possible)."
+        )
 
     left, right = st.columns([0.7, 0.3], gap="large")
 
@@ -418,6 +430,17 @@ def main() -> None:
 
     if st.session_state.live_running:
         try:
+            eng = get_engine()
+            if not getattr(eng.yolo, "model_ready", True):
+                st.warning("Fire/smoke model not ready yet. It may be downloading or training. Try again in a minute.")
+                st.session_state.live_running = False
+                st.rerun()
+        except Exception as e:
+            st.error(f"Model initialization failed: {e}")
+            st.session_state.live_running = False
+            return
+
+        try:
             import cv2
         except Exception:
             cv2 = None
@@ -474,7 +497,7 @@ def main() -> None:
                                 ]
                                 risk_info = payload.get("risk") or {}
                                 with SessionLocal() as db:
-                                    crud.create_detection(
+                                    det_row = crud.create_detection(
                                         db,
                                         timestamp=datetime.now(timezone.utc),
                                         class_name=str(payload.get("primary_class", "unknown")),
@@ -482,10 +505,32 @@ def main() -> None:
                                         boxes_xyxy=boxes,
                                         frame_path=None,
                                         heatmap_path=None,
-                                        llm_summary=None,
+                                        llm_summary="Agent analysis in progress...",
                                         source=source_kind,
                                         risk_score=float(risk_info.get("score", 0.0)),
                                     )
+                                    det_id = det_row.id
+                                    
+                                    # Launch non-blocking background thread for LLM summary
+                                    import threading
+                                    from models.yolo_detector import DetectionResult
+                                    
+                                    det_res = DetectionResult(
+                                        boxes=[list(b) for b in boxes],
+                                        scores=[float(d.get("score", 0.0)) for d in dets if isinstance(d, dict)],
+                                        class_ids=[0] * len(dets),
+                                        class_names=[str(d.get("class_name", "")) for d in dets if isinstance(d, dict)],
+                                        inference_time_ms=0.0,
+                                        frame=fr,
+                                        annotated_frame=np.empty((0, 0, 3), dtype=np.uint8)
+                                    )
+                                    
+                                    t = threading.Thread(
+                                        target=_bg_summarize,
+                                        args=(det_id, det_res, "Live Feed"),
+                                        daemon=True
+                                    )
+                                    t.start()
                             except Exception as db_err:
                                 logger.warning(f"DB save failed: {db_err}")
 
